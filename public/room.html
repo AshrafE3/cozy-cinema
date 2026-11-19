@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Watch Room - Cozy Cinema</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@600;800;900&display=swap" rel="stylesheet">
+  <!-- HLS.js for raw master m3u8 playback on Android & Desktop browsers -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <!-- Socket.io -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="room-body">
+
+  <!-- Floating reactions overlay -->
+  <div id="reactionOverlay" class="reaction-overlay"></div>
+
+  <!-- Name input modal if not set -->
+  <div id="nameModal" class="modal-overlay hidden">
+    <div class="modal-card name-modal-card" style="position: relative;">
+      <button id="btnCloseNameModal" class="btn-close-sub" type="button" aria-label="Close" style="position: absolute; top: 12px; right: 14px;">✕</button>
+      <div class="name-modal-icon">🍿</div>
+      <h3>Welcome to Movie Night!</h3>
+      <p class="tab-hint">Enter your name to watch with your partner:</p>
+      <div class="form-group">
+        <input type="text" id="modalNameInput" placeholder="Enter your name..." maxlength="20" autofocus autocomplete="off">
+      </div>
+      <button id="btnSubmitName" class="btn-primary w-full">Save & Join 🎬</button>
+    </div>
+  </div>
+
+  <!-- Mobile audio unlock banner (Crucial for iOS Safari sync) -->
+  <div id="mobileUnlockBanner" class="mobile-unlock-banner">
+    <div class="unlock-content">
+      <span class="unlock-icon">🍿</span>
+      <div class="unlock-text">
+        <h4>Tap to Enable Sync & Audio</h4>
+        <p>Tap below to unlock real-time synchronized playback and audio with your partner.</p>
+      </div>
+      <button id="btnUnlockMobile" class="btn-primary">Connect & Sync Now 🎬</button>
+    </div>
+  </div>
+
+  <!-- Header Nav -->
+  <header class="room-header">
+    <div class="header-left">
+      <a href="/" class="logo-small">Cozy<span>Cinema</span></a>
+      <span class="room-tag" id="displayRoomName">Room: ...</span>
+      <span class="status-badge" id="onlineBadge">
+        <span class="dot"></span>
+        <span id="userCountText">1 Online</span>
+      </span>
+      <div class="user-badge" id="userBadge" title="Click to change your name">
+        <span>👤</span>
+        <span id="currentUserNameDisplay">Set Name</span>
+        <span class="edit-icon">✎</span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <button id="btnVoiceCall" class="btn-header btn-voice" title="Start voice call with partner">
+        <span id="voiceCallIcon">🎙️</span>
+        <span id="voiceCallText">Voice Call</span>
+      </button>
+      <button id="btnVoiceMute" class="btn-header btn-voice-mute hidden" title="Mute/Unmute Mic">
+        <span id="voiceMuteIcon">🎤</span>
+      </button>
+      <button id="btnShareLink" class="btn-header btn-share" title="Invite your partner">
+        <span>🔗 Invite</span>
+      </button>
+      <button id="btnJumpToChatMobile" class="btn-header btn-mobile-chat-jump">
+        <span>💬 Chat</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <div class="room-grid">
+
+    <!-- Cinema Stage -->
+    <main class="theater-stage" id="theaterStage">
+      
+      <!-- Universal Media Selector Bar (Rave Style) -->
+      <div class="media-selector-bar">
+        <div class="source-tabs">
+          <button class="source-tab active" data-tab="url" type="button">🎬 Movies & Shows</button>
+          <button class="source-tab" data-tab="browse" type="button">🔍 Browse & Search</button>
+          <button class="source-tab" data-tab="youtube" type="button">▶️ YouTube</button>
+          <button class="source-tab" data-tab="file" type="button">📁 Local File</button>
+        </div>
+
+        <!-- URL / Movie Site Tab -->
+        <div class="tab-pane active" id="paneUrl">
+          <div class="extractor-input-wrap">
+            <span class="extractor-icon">🔗</span>
+            <input type="text" id="autoMovieUrlInput" placeholder="Paste link (TopCinema, EgyDead...) or type movie name (e.g. Obsession)...">
+            <button id="btnAutoExtract" class="btn-extract">
+              <span id="extractBtnText">🎬 Play</span>
+              <div id="extractSpinner" class="spinner hidden"></div>
+            </button>
+          </div>
+        </div>
+
+        <!-- Browse & Search Tab with Posters -->
+        <div class="tab-pane hidden" id="paneBrowse">
+          <div class="browse-search-bar">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="browseMovieInput" placeholder="Search any movie or show (e.g. Inception, Interstellar, Dune)...">
+            <button id="btnBrowseSearch" class="btn-browse-search" type="button">Search 🔍</button>
+          </div>
+          
+          <div class="genre-pill-list" id="genrePillList">
+            <button class="genre-pill active" data-genre="trending">🔥 Trending</button>
+            <button class="genre-pill" data-genre="romance">❤️ Romance</button>
+            <button class="genre-pill" data-genre="action">💥 Action</button>
+            <button class="genre-pill" data-genre="scifi">🚀 Sci-Fi</button>
+            <button class="genre-pill" data-genre="comedy">🍿 Comedy</button>
+            <button class="genre-pill" data-genre="horror">👻 Horror</button>
+          </div>
+
+          <div class="movies-cards-grid" id="moviesCardsGrid">
+            <!-- Dynamically populated cards with posters -->
+          </div>
+        </div>
+
+        <!-- YouTube Tab -->
+        <div class="tab-pane hidden" id="paneYoutube">
+          <div class="extractor-input-wrap">
+            <span class="extractor-icon">▶️</span>
+            <input type="url" id="youtubeUrlInput" placeholder="Paste YouTube video link (https://youtube.com/watch?v=... or youtu.be)...">
+            <button id="btnPlayYoutube" class="btn-extract btn-youtube" type="button">
+              <span>Watch Together ▶️</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Local File Tab -->
+        <div class="tab-pane hidden" id="paneFile">
+          <div class="file-picker-wrap">
+            <label for="localFileInput" class="btn-file-select">
+              <span class="file-icon">📁</span>
+              <span id="fileSelectLabel">Choose video from your device (0 Server Bandwidth)</span>
+            </label>
+            <input type="file" id="localFileInput" accept="video/*" class="hidden">
+            <p class="file-hint">💡 Local File Sync: If you and your partner have the same movie file, choose it to watch together in 4K with zero buffering and no ads!</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Video Player Wrapper -->
+      <div class="video-wrapper" id="videoWrapper">
+        <!-- Subtitle Drag & Drop Overlay -->
+        <div id="subDropOverlay" class="sub-drop-overlay hidden">
+          <div class="sub-drop-card">
+            <span class="sub-drop-icon">📂</span>
+            <h3>Drop Subtitle File Here (.srt or .vtt)</h3>
+            <p>Will be automatically converted and synchronized for both of you!</p>
+          </div>
+        </div>
+
+        <!-- Floating Cinema Chat Overlay (Messages appear on video & vanish) -->
+        <div id="videoChatOverlay" class="video-chat-overlay" aria-live="polite"></div>
+
+        <!-- Fullscreen Quick Chat Floating Bar -->
+        <div id="videoQuickChatBar" class="video-quick-chat-bar hidden">
+          <input type="text" id="videoQuickChatInput" placeholder="💬 Type a message to your partner (Press Enter to send)..." maxlength="200" autocomplete="off">
+          <button id="btnVideoQuickChatSend" class="btn-quick-send" type="button">Send 🚀</button>
+          <button id="btnVideoQuickChatClose" class="btn-quick-close" type="button" aria-label="Close">✕</button>
+        </div>
+
+        
+        <!-- Native Video Element with playsinline for iPhone -->
+        <video id="mainVideo"
+               playsinline
+               webkit-playsinline
+               x5-playsinline
+               preload="auto"
+               poster="https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=1200&q=80">
+        </video>
+
+        <!-- Custom Subtitle Overlay -->
+        <div id="customSubtitlesOverlay" class="custom-subtitles-overlay"></div>
+        <!-- Big Center Play Button Overlay (For iOS Autoplay unlock & easy play) -->
+        <div id="bigPlayOverlay" class="big-play-overlay hidden">
+          <button id="btnBigPlay" class="btn-big-play" type="button">
+            <span class="big-play-icon">▶</span>
+            <span class="big-play-text">Tap to Play Together 🎬</span>
+          </button>
+        </div>
+
+
+        <!-- Subtitle Customization Settings Modal (Centered in Video) -->
+        <div id="subtitleSettingsModal" class="sub-settings-modal hidden">
+          <div class="sub-settings-header">
+            <h4>⚙️ Subtitle Settings</h4>
+            <button id="btnCloseSubSettings" class="btn-close-sub" type="button" aria-label="Close">✕</button>
+          </div>
+          
+          <div class="sub-settings-section">
+            <label>Font Size</label>
+            <div class="sub-btn-group" id="subSizeGroup">
+              <button data-size="sm" class="sub-opt-btn" type="button">Small A-</button>
+              <button data-size="md" class="sub-opt-btn active" type="button">Medium A</button>
+              <button data-size="lg" class="sub-opt-btn" type="button">Large A+</button>
+              <button data-size="xl" class="sub-opt-btn" type="button">Huge A++</button>
+            </div>
+          </div>
+
+          <div class="sub-settings-section">
+            <label>Background</label>
+            <div class="sub-btn-group" id="subBgGroup">
+              <button data-bg="none" class="sub-opt-btn active" type="button">No Background (Cinema Outline)</button>
+              <button data-bg="semi" class="sub-opt-btn" type="button">Semi-Transparent</button>
+              <button data-bg="box" class="sub-opt-btn" type="button">Dark Box</button>
+            </div>
+          </div>
+
+          <div class="sub-settings-section">
+            <label>Text Color</label>
+            <div class="sub-btn-group" id="subColorGroup">
+              <button data-color="white" class="sub-opt-btn active" type="button">White</button>
+              <button data-color="yellow" class="sub-opt-btn" type="button" style="color: #ffd83b;">Yellow</button>
+            </div>
+          </div>
+
+          <div class="sub-settings-section">
+            <label>Subtitle Sync / Timing (Shortcut: G delay / H advance)</label>
+            <div class="sub-btn-group" id="subTimingGroup">
+              <button id="btnSubDelayMinus1" class="sub-opt-btn" type="button" title="Appear 1s earlier">-1.0s</button>
+              <button id="btnSubDelayMinus05" class="sub-opt-btn" type="button" title="Appear 0.5s earlier">-0.5s</button>
+              <span id="subOffsetDisplay" style="display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: #38bdf8; padding: 4px 10px; background: rgba(56,189,248,0.15); border-radius: 6px; min-width: 50px;">0.0s</span>
+              <button id="btnSubDelayPlus05" class="sub-opt-btn" type="button" title="Delay 0.5s">+0.5s</button>
+              <button id="btnSubDelayPlus1" class="sub-opt-btn" type="button" title="Delay 1s">+1.0s</button>
+              <button id="btnSubResetOffset" class="sub-opt-btn" type="button" title="Reset to 0s">Reset</button>
+            </div>
+          </div>
+
+          <div class="sub-settings-section">
+            <label>Custom Subtitle File (.srt, .vtt)</label>
+            <div class="sub-btn-group" style="display: flex; flex-direction: column; gap: 8px;">
+              <input type="file" id="subFileInput" accept=".srt,.vtt" class="hidden">
+              <button id="btnUploadSubFile" class="sub-opt-btn" type="button" style="width: 100%; justify-content: center; background: rgba(56,189,248,0.12); border-color: rgba(56,189,248,0.4); color: #38bdf8;">📂 Upload .SRT / .VTT from Device (Syncs to Partner)</button>
+              <small style="color: #94a3b8; font-size: 11px;">💡 Tip: You can also drag & drop any subtitle file directly onto the movie!</small>
+            </div>
+          </div>
+
+          <div class="sub-settings-footer">
+            <button id="btnDoneSubSettings" class="btn-sub-done" type="button">✓ Save Settings</button>
+          </div>
+        </div>
+
+                <!-- YouTube Sync Player Container -->
+        <div id="youtubeContainer" class="youtube-container hidden">
+          <div id="youtubePlayer"></div>
+        </div>
+
+        <!-- Iframe container for fallback embeds -->
+        <div id="iframeContainer" class="iframe-container hidden">
+          <iframe id="embedFrame"
+                  allowfullscreen="true"
+                  webkitallowfullscreen="true"
+                  mozallowfullscreen="true"
+                  allow="autoplay *; fullscreen *; encrypted-media *">
+          </iframe>
+        </div>
+
+        <!-- Sync Notification Toast -->
+        <div id="syncToast" class="sync-toast hidden"></div>
+
+        <!-- Custom Video Controls Overlay -->
+        <div class="custom-video-controls" id="customControls">
+          <!-- Timeline progress scrubber -->
+          <div class="progress-bar-wrap" id="progressWrap">
+            <div class="progress-filled" id="progressFilled"></div>
+            <div class="progress-handle" id="progressHandle"></div>
+          </div>
+
+          <div class="controls-row">
+            <div class="controls-left">
+              <button id="btnPlayPause" class="ctrl-btn" title="Play/Pause">▶ Play</button>
+              <button id="btnRewind10" class="ctrl-btn" title="Rewind 10s">↺ 10s</button>
+              <button id="btnForward10" class="ctrl-btn" title="Forward 10s">10s ↻</button>
+              <span class="time-display" id="timeDisplay">0:00 / 0:00</span>
+            </div>
+
+            <div class="controls-right">
+              <button id="btnFullscreenChat" class="ctrl-btn btn-fs-chat" title="Quick Message in Fullscreen">💬</button>
+              <button id="btnSubtitleToggle" class="ctrl-btn btn-sub" title="Toggle Subtitles">💬 Subs: Ar</button>
+              <button id="btnSubtitleSettings" class="ctrl-btn btn-sub-settings" title="Subtitle Settings">⚙️</button>
+              <button id="btnMuteToggle" class="ctrl-btn" title="Mute/Unmute">🔊</button>
+              <button id="btnFitToggle" class="ctrl-btn btn-fit" title="Toggle Screen Fill (No Black Bars)">🔲 Fill</button>
+              <button id="btnFullscreen" class="ctrl-btn btn-fs" title="Toggle Fullscreen">⛶</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Now Playing & Status Bar -->
+      <div class="player-toolbar">
+        <div class="now-playing-info"><span class="film-icon">🎬</span><span id="nowPlayingTitle" class="film-title">No Media Loaded — Paste a link or select a file above</span></div>
+        <div class="toolbar-actions">
+          <button id="btnQuickSync" class="btn-tool" title="Force sync playback time">
+            <span>⚡ Sync Now</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Floating Reactions Bar (Tap to send hearts) -->
+      <div class="reactions-bar">
+        <span class="reactions-label">React:</span>
+        <button class="reaction-btn" data-emoji="❤️">❤️</button>
+        <button class="reaction-btn" data-emoji="😂">😂</button>
+        <button class="reaction-btn" data-emoji="🔥">🔥</button>
+        <button class="reaction-btn" data-emoji="🍿">🍿</button>
+        <button class="reaction-btn" data-emoji="🥺">🥺</button>
+        <button class="reaction-btn" data-emoji="🥰">🥰</button>
+      </div>
+
+      <!-- Mobile Quick Scroll to Chat Banner -->
+      <div class="mobile-chat-cta" id="mobileChatCta">
+        <span>💬 Chat is right below! Scroll down to talk with your partner</span>
+        <button id="btnScrollDownToChat" class="btn-secondary">Go to Chat ↓</button>
+      </div>
+    </main>
+
+    <!-- Always-Visible Live Chat -->
+    <aside class="chat-sidebar" id="chatSidebar">
+      <div class="chat-header">
+        <h3>💬 Live Room Chat</h3>
+        <div class="chat-header-actions">
+          <button id="btnToggleChatSound" class="btn-chat-sound" type="button" title="Chat Notification Sound">🔔</button>
+          <span class="chat-online-pill" id="chatOnlinePill">🟢 Connected</span>
+        </div>
+      </div>
+
+      <div class="chat-messages" id="chatMessages">
+        <div class="system-msg">
+          🎉 Welcome to movie night! Paste any movie link in the box above to start watching together in sync.
+        </div>
+      </div>
+
+      <form id="chatForm" class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="Send a message..." maxlength="200" autocomplete="off">
+        <button type="submit" class="btn-send">Send</button>
+      </form>
+    </aside>
+
+  </div>
+
+  <!-- Share Link Modal with Mobile QR Code -->
+  <div id="shareModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📲 Invite Your Partner</h3>
+        <button id="btnCloseShareModal" class="modal-close">&times;</button>
+      </div>
+
+      <div class="share-box">
+        <p class="tab-hint">Scan with mobile camera to join immediately, or copy the direct link:</p>
+        
+        <div class="qr-container">
+          <img id="qrImage" src="" alt="QR Code" width="180" height="180">
+          <small>Point your phone's camera here to join with 1 tap</small>
+        </div>
+
+        <div class="form-group" style="margin-top: 15px;">
+          <label>Direct Mobile Room Link:</label>
+          <div class="input-with-button">
+            <input type="text" id="shareUrlDisplay" readonly>
+            <button type="button" id="btnCopyShareUrl" class="btn-secondary">Copy 📋</button>
+          </div>
+        </div>
+
+        <div class="share-tips">
+          <p>💡 <b>Same Wi-Fi network:</b> The link above opens instantly on her phone.</p>
+          <p>💡 <b>Different locations:</b> Deploy for free or use <code>npx localtunnel --port 3000</code>.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/client.js"></script>
+</body>
+</html>

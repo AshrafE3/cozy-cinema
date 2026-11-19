@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Cozy Cinema - Watch Movies Together</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="landing-body">
+  <div class="stars-bg"></div>
+
+  <main class="landing-container">
+    <div class="brand-header">
+      <div class="popcorn-badge">🍿 Tonight's Movie Night</div>
+      <h1>Cozy <span>Cinema</span></h1>
+      <p class="tagline">Watch any movie, stream, or video together in real-time sync with top 1080p quality and zero lag ❤️</p>
+    </div>
+
+    <!-- Active Rooms Alert (If a room is already open) -->
+    <div id="activeRoomsSection" class="active-rooms-card hidden">
+      <div class="pulse-header">
+        <span class="live-dot"></span>
+        <span>A room is open and waiting for you right now! 🎉</span>
+      </div>
+      <div id="activeRoomsList" class="active-rooms-list"></div>
+    </div>
+
+    <div class="glass-card">
+      <div class="home-tabs">
+        <button type="button" class="home-tab-btn active" id="tabJoinBtn">👥 Join Room</button>
+        <button type="button" class="home-tab-btn" id="tabCreateBtn">➕ Create New Room</button>
+      </div>
+
+      <div class="form-group">
+        <label for="userName">Your Name</label>
+        <input type="text" id="userName" placeholder="e.g. Alex" maxlength="20" autofocus>
+      </div>
+
+      <!-- Join Room Tab Pane -->
+      <div id="paneJoin" class="tab-pane active">
+        <div class="form-group">
+          <label for="joinRoomInput">Room Name or Code</label>
+          <input type="text" id="joinRoomInput" placeholder="Enter room name to join">
+        </div>
+        <button id="btnJoinRoom" class="btn-primary">
+          <span>Join Room Now 👉</span>
+        </button>
+      </div>
+
+      <!-- Create Room Tab Pane -->
+      <div id="paneCreate" class="tab-pane">
+        <div class="form-group">
+          <label for="createRoomInput">New Room Name</label>
+          <div class="input-with-button">
+            <input type="text" id="createRoomInput" placeholder="e.g. movie-night">
+            <button type="button" id="btnRandomRoom" class="btn-secondary" title="Generate random name">🎲</button>
+          </div>
+        </div>
+        <button id="btnCreateRoom" class="btn-primary">
+          <span>Create Room & Start 🎬</span>
+        </button>
+      </div>
+
+      <div class="features-pill-row">
+        <span>⚡ Zero Lag</span>
+        <span>📱 Mobile Optimized</span>
+        <span>❤️ Live Reactions</span>
+        <span>🎬 1080p Master Quality</span>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const adjectives = ['cozy', 'sweet', 'cute', 'magic', 'happy', 'chill', 'night', 'starry', 'velvet'];
+    const nouns = ['cinema', 'movie', 'date', 'room', 'party', 'vibes', 'couch', 'popcorn', 'haven'];
+
+    function generateRandomRoom() {
+      const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+      const noun = nouns[Math.floor(Math.random() * nouns.length)];
+      const num = Math.floor(100 + Math.random() * 900);
+      return `${adj}-${noun}-${num}`;
+    }
+
+    const nameInput = document.getElementById('userName');
+    const joinInput = document.getElementById('joinRoomInput');
+    const createInput = document.getElementById('createRoomInput');
+    const btnRandom = document.getElementById('btnRandomRoom');
+    const btnJoin = document.getElementById('btnJoinRoom');
+    const btnCreate = document.getElementById('btnCreateRoom');
+
+    const tabJoinBtn = document.getElementById('tabJoinBtn');
+    const tabCreateBtn = document.getElementById('tabCreateBtn');
+    const paneJoin = document.getElementById('paneJoin');
+    const paneCreate = document.getElementById('paneCreate');
+
+    const activeRoomsSection = document.getElementById('activeRoomsSection');
+    const activeRoomsList = document.getElementById('activeRoomsList');
+
+    // Restore saved username
+    const savedName = localStorage.getItem('cozy_username');
+    if (savedName) nameInput.value = savedName;
+
+    createInput.value = generateRandomRoom();
+
+    btnRandom.addEventListener('click', () => {
+      createInput.value = generateRandomRoom();
+    });
+
+    // Tab Switching
+    tabJoinBtn.addEventListener('click', () => {
+      tabJoinBtn.classList.add('active');
+      tabCreateBtn.classList.remove('active');
+      paneJoin.classList.add('active');
+      paneCreate.classList.remove('active');
+    });
+
+    tabCreateBtn.addEventListener('click', () => {
+      tabCreateBtn.classList.add('active');
+      tabJoinBtn.classList.remove('active');
+      paneCreate.classList.add('active');
+      paneJoin.classList.remove('active');
+    });
+
+    // Check query param e.g. /?room=my-room
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryRoom = urlParams.get('room');
+    if (queryRoom) {
+      joinInput.value = queryRoom;
+      tabJoinBtn.click();
+    }
+
+    // Check active rooms from server
+    async function checkActiveRooms() {
+      try {
+        const res = await fetch('/api/rooms');
+        const data = await res.json();
+        if (data.activeRooms && data.activeRooms.length > 0) {
+          activeRoomsList.innerHTML = '';
+          data.activeRooms.forEach(room => {
+            const item = document.createElement('div');
+            item.className = 'active-room-item';
+            item.innerHTML = `
+              <div class="room-info-meta">
+                <b>🎬 Room: ${room.id}</b>
+                <small>Watching: ${room.users.join(', ')}</small>
+              </div>
+              <button class="btn-enter-room" data-room="${room.id}">Join Now 👉</button>
+            `;
+            activeRoomsList.appendChild(item);
+          });
+          activeRoomsSection.classList.remove('hidden');
+
+          // Auto-fill the first active room into join box
+          if (!queryRoom && !joinInput.value) {
+            joinInput.value = data.activeRooms[0].id;
+          }
+
+          document.querySelectorAll('.btn-enter-room').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const r = btn.getAttribute('data-room');
+              enterRoom(r);
+            });
+          });
+        }
+      } catch (err) {
+        console.log('No active rooms found');
+      }
+    }
+    checkActiveRooms();
+
+    function enterRoom(roomName) {
+      const name = nameInput.value.trim() || 'Viewer';
+      const cleanRoom = (roomName || 'general').replace(/\s+/g, '-').toLowerCase();
+      localStorage.setItem('cozy_username', name);
+      window.location.href = `/room/${encodeURIComponent(cleanRoom)}`;
+    }
+
+    btnJoin.addEventListener('click', () => {
+      const room = joinInput.value.trim();
+      if (!room) {
+        alert('Please enter a room name or select an active room above');
+        return;
+      }
+      enterRoom(room);
+    });
+
+    btnCreate.addEventListener('click', () => {
+      const room = createInput.value.trim() || generateRandomRoom();
+      enterRoom(room);
+    });
+
+    nameInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        if (paneJoin.classList.contains('active')) btnJoin.click();
+        else btnCreate.click();
+      }
+    });
+    joinInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') btnJoin.click();
+    });
+    createInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+  </script>
+</body>
+</html>
