@@ -1030,20 +1030,22 @@ io.on('connection', (socket) => {
   socket.on('voice-join', ({ roomId, name }) => {
     const targetRoom = roomId || currentRoom;
     if (!targetRoom) return;
-    console.log(`[VoiceChat] User ${userName} (${socket.id}) joined voice in room ${targetRoom}`);
+    console.log(`[VoiceChat] User ${userName} (${socket.id}) voice ready in room ${targetRoom}`);
     socket.to(targetRoom).emit('voice-peer-joined', { peerId: socket.id, name: name || userName });
   });
 
   socket.on('voice-signal', ({ to, signal }) => {
+    const targetRoom = currentRoom;
     if (to) {
       io.to(to).emit('voice-signal', { from: socket.id, signal, name: userName });
+    } else if (targetRoom) {
+      socket.to(targetRoom).emit('voice-signal', { from: socket.id, signal, name: userName });
     }
   });
 
   socket.on('voice-leave', ({ roomId }) => {
     const targetRoom = roomId || currentRoom;
     if (!targetRoom) return;
-    console.log(`[VoiceChat] User ${userName} (${socket.id}) left voice in room ${targetRoom}`);
     socket.to(targetRoom).emit('voice-peer-left', { peerId: socket.id, name: userName });
   });
 
@@ -1107,3 +1109,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`==================================================`);
   console.log(`✨ Open http://localhost:${PORT} in your browser to begin!\n`);
 });
+
+module.exports = app;
