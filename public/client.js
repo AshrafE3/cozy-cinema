@@ -13,15 +13,6 @@ window.fetch = function(url, options = {}) {
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const socket = io({
-    reconnection: true,
-    reconnectionAttempts: Infinity,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
-    timeout: 20000,
-    transports: ['websocket', 'polling']
-  });
-
   // Extract Room ID from pathname
   const pathParts = window.location.pathname.split('/').filter(Boolean);
   let roomId = decodeURIComponent(pathParts[pathParts.length - 1] || 'general');
@@ -33,6 +24,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     sessionStorage.setItem('cozy_client_id', myClientId);
   }
   let hasJoinedRoomOnce = false;
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAwXcgbHxSYKagqTReqgeSXYcO4nnrRgiU",
+    authDomain: "cozy-cinema.firebaseapp.com",
+    databaseURL: "https://cozy-cinema-default-rtdb.firebaseio.com",
+    projectId: "cozy-cinema",
+    storageBucket: "cozy-cinema.firebasestorage.app",
+    messagingSenderId: "80222677579",
+    appId: "1:80222677579:web:04c57f205f7fb1c952fbce"
+  };
+
+  let socket;
+  if (typeof FirebaseSocketAdapter !== 'undefined' && typeof firebase !== 'undefined') {
+    console.log('[CozyCinema] 🚀 Connected to 24/7 Google Firebase Realtime Cloud Sync!');
+    socket = new FirebaseSocketAdapter(firebaseConfig, roomId, myClientId);
+  } else {
+    console.log('[CozyCinema] Using Local Socket.io fallback');
+    socket = io({
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+      transports: ['websocket', 'polling']
+    });
+  }
 
   // DOM Elements
   const displayRoomName = document.getElementById('displayRoomName');
@@ -55,6 +72,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const subColorGroup = document.getElementById('subColorGroup');
   const subPreviewText = document.getElementById('subPreviewText');
   const btnUnlockMobile = document.getElementById('btnUnlockMobile');
+  const centerPlayOverlay = document.getElementById('centerPlayOverlay');
+  const btnCenterPlay = document.getElementById('btnCenterPlay');
+  const centerPlayIcon = document.getElementById('centerPlayIcon');
+  const bigPlayOverlay = centerPlayOverlay;
 
   // Popup Blocker to keep movie viewing 100% ad-free
   window.open = function(url) {
@@ -108,7 +129,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           showToast('⚠️ Could not load YouTube video. Check the link.');
         }
       } catch (e) {
-        showToast('⚠️ Error connecting to server.');
+        console.error('[YouTube Load Error]', e);
+        showToast('⚠️ Error: ' + (e.message || 'Connecting to server'));
       }
     });
   }
@@ -750,6 +772,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
       isRemoteYtSync = true;
+      if (isMediaDucked) {
+        try { ytPlayer.setVolume(15); } catch (e) {}
+      }
       ytPlayer.loadVideoById({
         videoId: videoId,
         startSeconds: startSeek
@@ -781,6 +806,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         events: {
           onReady: (event) => {
             isRemoteYtSync = true;
+            if (isMediaDucked) {
+              try { event.target.setVolume(15); } catch (e) {}
+            }
             if (startSeek > 0) event.target.seekTo(startSeek, true);
             if (shouldPlay) event.target.playVideo();
             else event.target.pauseVideo();
@@ -1067,19 +1095,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   videoWrapper.addEventListener('touchstart', showControls, { passive: true });
 
   videoWrapper.addEventListener('click', (e) => {
-    // If click was inside controls, settings modal or quick chat, keep visible
-    if (e.target.closest('.custom-video-controls') || e.target.closest('.sub-settings-modal') || e.target.closest('.video-quick-chat-bar')) {
+    // If click was inside controls, settings modal, quick chat, or close buttons, just show controls
+    if (e.target.closest('.custom-video-controls') || 
+        e.target.closest('.sub-settings-modal') || 
+        e.target.closest('.video-quick-chat-bar') ||
+        e.target.closest('.btn-close-sub')) {
       showControls();
       return;
     }
 
-    // Tapping on the video stage toggles controls visibility
-    if (videoWrapper.classList.contains('controls-hidden')) {
-      showControls();
-    } else {
-      hideControlsImmediately();
-    }
+    // Tapping anywhere on the video player directly toggles Play/Pause!
+    togglePlayPause();
   });
+
+  // ================= ▶️ CINEMA CENTER PLAY/PAUSE CONTROLLER =================
+  function showBigPlayOverlay() {
+    if (centerPlayOverlay) centerPlayOverlay.classList.remove('hidden');
+  }
+
+  function hideBigPlayOverlay() {
+    if (centerPlayOverlay) centerPlayOverlay.classList.add('hidden');
+  }
 
   function updatePlayButtonUI() {
     let isPaused = true;
@@ -1098,78 +1134,35 @@ document.addEventListener('DOMContentLoaded', async () => {
       btnPlayPause.textContent = '▶ Play';
       videoWrapper.classList.remove('controls-hidden');
       clearTimeout(controlsHideTimer);
+      if (centerPlayOverlay) centerPlayOverlay.classList.remove('hidden');
+      if (centerPlayIcon) {
+        centerPlayIcon.textContent = '▶';
+        centerPlayIcon.classList.remove('paused-icon');
+      }
     } else {
       btnPlayPause.textContent = '⏸ Pause';
+      if (centerPlayOverlay) centerPlayOverlay.classList.add('hidden');
     }
   }
 
-
-  // ================= ▶️ BIG PLAY OVERLAY (Mobile & iOS Autoplay Sync) =================
-  const bigPlayOverlay = document.getElementById('bigPlayOverlay');
-  const btnBigPlay = document.getElementById('btnBigPlay');
-
-  function showBigPlayOverlay() {
-    if (bigPlayOverlay) bigPlayOverlay.classList.remove('hidden');
-  }
-
-  function hideBigPlayOverlay() {
-    if (bigPlayOverlay) bigPlayOverlay.classList.add('hidden');
-  }
-
-  function triggerBigPlay() {
-    unlockMedia();
-    hideBigPlayOverlay();
-    if (currentSourceType === 'youtube' && ytPlayer) {
-      try {
-        ytPlayer.playVideo();
-      } catch (e) {}
-      const cur = (ytPlayer.getCurrentTime && typeof ytPlayer.getCurrentTime === 'function') ? ytPlayer.getCurrentTime() : 0;
-      socket.emit('media-play', { time: cur });
-      updatePlayButtonUI();
-      startControlsHideTimer(2500);
-      showToast('▶️ Video started!');
-      return;
+  function flashCenterIcon(icon) {
+    if (!centerPlayOverlay) return;
+    if (centerPlayIcon) {
+      centerPlayIcon.textContent = icon;
+      if (icon === '⏸') centerPlayIcon.classList.add('paused-icon');
+      else centerPlayIcon.classList.remove('paused-icon');
     }
-    mainVideo.play().then(() => {
-      socket.emit('media-play', { time: mainVideo.currentTime });
+    centerPlayOverlay.classList.remove('hidden');
+    centerPlayOverlay.classList.remove('center-flash-pop');
+    void centerPlayOverlay.offsetWidth;
+    centerPlayOverlay.classList.add('center-flash-pop');
+    setTimeout(() => {
+      centerPlayOverlay.classList.remove('center-flash-pop');
       updatePlayButtonUI();
-      startControlsHideTimer(2500);
-      showToast('▶️ Movie started!');
-    }).catch(err => {
-      console.log('Play failed:', err);
-    });
+    }, 450);
   }
 
-  if (btnBigPlay) {
-    btnBigPlay.addEventListener('click', (e) => {
-      e.stopPropagation();
-      triggerBigPlay();
-    });
-  }
-
-  if (bigPlayOverlay) {
-    bigPlayOverlay.addEventListener('click', (e) => {
-      if (e.target.closest('.btn-big-play')) return;
-      triggerBigPlay();
-    });
-  }
-
-  mainVideo.addEventListener('play', () => {
-    hideBigPlayOverlay();
-    updatePlayButtonUI();
-  });
-
-  mainVideo.addEventListener('pause', () => {
-    updatePlayButtonUI();
-  });
-
-  mainVideo.addEventListener('error', (e) => {
-    console.warn('Video element error:', mainVideo.error);
-    showBigPlayOverlay();
-  });
-
-  // Play / Pause Button (Controls both native video AND YouTube!)
-  btnPlayPause.addEventListener('click', () => {
+  function togglePlayPause() {
     unlockMedia();
     if (currentSourceType === 'youtube' && ytPlayer) {
       let isPlaying = false;
@@ -1185,29 +1178,73 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast('⏸️ You paused the video');
         videoWrapper.classList.remove('controls-hidden');
         clearTimeout(controlsHideTimer);
+        flashCenterIcon('⏸');
       } else {
         try { ytPlayer.playVideo(); } catch (e) {}
         socket.emit('media-play', { time: cur });
         showToast('▶️ You played the video');
         startControlsHideTimer(2500);
+        flashCenterIcon('▶');
       }
       updatePlayButtonUI();
       return;
     }
 
     if (mainVideo.paused) {
-      mainVideo.play().catch(() => {});
-      socket.emit('media-play', { time: mainVideo.currentTime });
-      showToast('▶️ You played the movie');
-      startControlsHideTimer(2500);
+      mainVideo.play().then(() => {
+        socket.emit('media-play', { time: mainVideo.currentTime });
+        showToast('▶️ You played the movie');
+        startControlsHideTimer(2500);
+        flashCenterIcon('▶');
+        updatePlayButtonUI();
+      }).catch(err => {
+        console.warn('Play error:', err);
+      });
     } else {
       mainVideo.pause();
       socket.emit('media-pause', { time: mainVideo.currentTime });
       showToast('⏸️ You paused the movie');
       videoWrapper.classList.remove('controls-hidden');
       clearTimeout(controlsHideTimer);
+      flashCenterIcon('⏸');
+      updatePlayButtonUI();
     }
+  }
+
+  if (btnCenterPlay) {
+    btnCenterPlay.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePlayPause();
+    });
+  }
+
+  btnPlayPause.addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePlayPause();
+  });
+
+  mainVideo.addEventListener('play', () => {
+    hideBigPlayOverlay();
     updatePlayButtonUI();
+    if (isMediaDucked) mainVideo.volume = 0.15;
+  });
+
+  mainVideo.addEventListener('pause', () => {
+    updatePlayButtonUI();
+  });
+
+  mainVideo.addEventListener('error', (e) => {
+    console.warn('Video element error:', mainVideo.error);
+    showBigPlayOverlay();
+  });
+
+  // Keyboard shortcut: Press Spacebar to play/pause anytime!
+  document.addEventListener('keydown', (e) => {
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      togglePlayPause();
+    }
   });
 
   // Rewind 10s (Controls both native video AND YouTube!)
@@ -1857,7 +1894,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const voiceCallIcon = document.getElementById('voiceCallIcon');
   const voiceCallText = document.getElementById('voiceCallText');
   const voiceMuteIcon = document.getElementById('voiceMuteIcon');
+  const btnPlayerMic = document.getElementById('btnPlayerMic');
+  const playerMicIcon = document.getElementById('playerMicIcon');
+  const playerMicText = document.getElementById('playerMicText');
 
+  // ================= 🎙️ WEBRTC AUTO-VOICE CALL ENGINE (DISCORD STYLE) =================
   let localAudioStream = null;
   let peerConnection = null;
   let audioSender = null;
@@ -1868,6 +1909,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   let duckingInterval = null;
   let isDucking = false;
   const originalMovieVolume = 1.0;
+  let dummyAudioStream = null;
+  const iceCandidateQueue = [];
 
   const rtcConfig = {
     iceServers: [
@@ -1878,21 +1921,46 @@ document.addEventListener('DOMContentLoaded', async () => {
     ]
   };
 
-  // 1. Mobile Audio Autoplay Unlocker
+  // Helper: Generates a lightweight silent track so WebRTC connection is 100% established
+  // without asking for mic permissions upfront. When user talks, we replaceTrack instantly!
+  function getOrCreateSilentTrack() {
+    if (dummyAudioStream && dummyAudioStream.getAudioTracks().length > 0) {
+      return dummyAudioStream.getAudioTracks()[0];
+    }
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return null;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const dst = osc.connect(ctx.createMediaStreamDestination());
+      osc.start();
+      const track = dst.stream.getAudioTracks()[0];
+      track.enabled = false; // Muted / zero sound
+      dummyAudioStream = dst.stream;
+      return track;
+    } catch (e) {
+      console.warn('[VoiceChat] Could not generate silent audio track:', e);
+      return null;
+    }
+  }
+
+  // 1. Mobile & Desktop Audio Autoplay Unlocker
   function ensureAudioUnlocked() {
     try {
       if (audioContext && audioContext.state === 'suspended') {
         audioContext.resume().catch(() => {});
       }
-      if (remoteAudioElement && remoteAudioElement.paused && remoteAudioElement.srcObject) {
-        remoteAudioElement.play().catch(() => {});
+      const remoteEl = document.getElementById('remoteVoiceAudio') || remoteAudioElement;
+      if (remoteEl && remoteEl.paused && remoteEl.srcObject) {
+        remoteEl.play().catch(() => {});
       }
     } catch (e) {}
   }
   document.addEventListener('pointerdown', ensureAudioUnlocked, { passive: true });
   document.addEventListener('click', ensureAudioUnlocked, { passive: true });
+  document.addEventListener('touchstart', ensureAudioUnlocked, { passive: true });
 
-  // 2. Auto-initialize Voice Engine (Always-Listening Mode)
+  // 2. Initialize WebRTC Peer Connection (Always-Listening Receiver)
   function initAutoVoice() {
     if (peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
       return;
@@ -1905,8 +1973,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       peerConnection = new RTCPeerConnection(rtcConfig);
 
-      // Always ready to receive partner's audio through phone/PC speakers
-      peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+      // Attach silent track so connection negotiates a live audio channel immediately
+      const silentTrack = getOrCreateSilentTrack();
+      if (silentTrack && dummyAudioStream) {
+        audioSender = peerConnection.addTrack(silentTrack, dummyAudioStream);
+      } else {
+        peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+      }
 
       // Handle ICE Candidates
       peerConnection.onicecandidate = (event) => {
@@ -1917,31 +1990,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       };
 
-      // Handle incoming partner audio track -> Play immediately!
+      // Handle incoming partner audio track -> Play immediately through speakers!
       peerConnection.ontrack = (event) => {
-        console.log('[VoiceChat] Remote audio track received from partner!');
-        if (!remoteAudioElement) {
-          remoteAudioElement = new Audio();
-          remoteAudioElement.autoplay = true;
-          remoteAudioElement.playsInline = true;
+        console.log('[VoiceChat] Remote audio track received from partner!', event);
+        const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+
+        let audioEl = document.getElementById('remoteVoiceAudio');
+        if (!audioEl) {
+          audioEl = document.createElement('audio');
+          audioEl.id = 'remoteVoiceAudio';
+          document.body.appendChild(audioEl);
         }
-        remoteAudioElement.srcObject = event.streams[0];
-        remoteAudioElement.play().catch(e => console.log('Audio autoplay waiting for user tap:', e));
-        setupAudioDucking(event.streams[0]);
+        audioEl.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0.001;pointer-events:none;bottom:0;right:0;';
+        audioEl.autoplay = true;
+        audioEl.playsInline = true;
+        audioEl.volume = 1.0;
+        audioEl.muted = false;
+        audioEl.srcObject = remoteStream;
+        remoteAudioElement = audioEl;
+
+        const p = audioEl.play();
+        if (p !== undefined) {
+          p.catch(e => console.log('[VoiceChat] Autoplay waiting for tap:', e));
+        }
+
+        event.track.onunmute = () => {
+          console.log('[VoiceChat] Remote track unmuted, playing audio');
+          if (remoteAudioElement) remoteAudioElement.play().catch(() => {});
+        };
+
         showToast('🔊 Partner voice connected! Speakers ready.');
       };
 
       peerConnection.onconnectionstatechange = () => {
         console.log('[VoiceChat] Connection state:', peerConnection.connectionState);
         if (peerConnection.connectionState === 'connected') {
-          console.log('[VoiceChat] WebRTC audio connected successfully!');
+          console.log('[VoiceChat] WebRTC voice connected successfully!');
         } else if (peerConnection.connectionState === 'failed') {
-          console.warn('[VoiceChat] Connection failed, attempting reset...');
+          console.warn('[VoiceChat] Connection failed, resetting...');
           setTimeout(initAutoVoice, 2000);
         }
       };
 
-      // Notify room that we are ready to listen/talk
+      // Announce readiness in room
       socket.emit('voice-join', { roomId, name: myName });
 
     } catch (err) {
@@ -1949,115 +2040,157 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // 3. Audio Ducking: automatically lowers movie volume when partner speaks!
-  function setupAudioDucking(stream) {
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      if (!audioContext) audioContext = new AudioCtx();
-      if (audioContext.state === 'suspended') audioContext.resume();
+  // ================= 🎧 UNIVERSAL AUDIO DUCKING (MOVIES, SHOWS & YOUTUBE) =================
+  let isMediaDucked = false;
+  let savedMainVideoVolume = 1.0;
+  let savedYtVolume = 100;
+  let partnerSpeakingViaSocket = false;
 
-      const source = audioContext.createMediaStreamSource(stream);
-      duckingAnalyser = audioContext.createAnalyser();
-      duckingAnalyser.fftSize = 256;
-      source.connect(duckingAnalyser);
+  function updateMicUI(isLive, isGlowing) {
+    if (btnVoiceCall) {
+      if (isLive) {
+        btnVoiceCall.classList.add('in-call');
+        if (voiceCallIcon) voiceCallIcon.textContent = '🟢';
+        if (voiceCallText) voiceCallText.textContent = 'Mic Live';
+      } else {
+        btnVoiceCall.classList.remove('in-call');
+        if (voiceCallIcon) voiceCallIcon.textContent = '🎙️';
+        if (voiceCallText) voiceCallText.textContent = 'Mic Off';
+      }
+      if (isGlowing) btnVoiceCall.classList.add('speaking-glow');
+      else if (!isLive) btnVoiceCall.classList.remove('speaking-glow');
+    }
 
-      const bufferLength = duckingAnalyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-      let silenceTimer = 0;
-
-      if (duckingInterval) clearInterval(duckingInterval);
-      duckingInterval = setInterval(() => {
-        duckingAnalyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-        const average = sum / bufferLength;
-
-        if (average > 15) {
-          // Partner is speaking! Smoothly duck movie volume
-          if (!isDucking && mainVideo) {
-            isDucking = true;
-            mainVideo.volume = 0.25;
-            if (btnVoiceCall) btnVoiceCall.classList.add('speaking-glow');
-          }
-          silenceTimer = Date.now();
-        } else {
-          // Silence: restore movie volume after 1 second
-          if (isDucking && Date.now() - silenceTimer > 1000) {
-            isDucking = false;
-            if (mainVideo) mainVideo.volume = originalMovieVolume;
-            if (btnVoiceCall && !isMicLive) btnVoiceCall.classList.remove('speaking-glow');
-          }
-        }
-      }, 100);
-    } catch (e) {
-      console.warn('[AudioDucking Error]', e);
+    if (btnPlayerMic) {
+      if (isLive) {
+        btnPlayerMic.classList.add('in-call');
+        if (playerMicIcon) playerMicIcon.textContent = '🟢';
+        if (playerMicText) playerMicText.textContent = 'Mic Live';
+      } else {
+        btnPlayerMic.classList.remove('in-call');
+        if (playerMicIcon) playerMicIcon.textContent = '🎙️';
+        if (playerMicText) playerMicText.textContent = 'Mic Off';
+      }
+      if (isGlowing) btnPlayerMic.classList.add('speaking-glow');
+      else if (!isLive) btnPlayerMic.classList.remove('speaking-glow');
     }
   }
 
-  // 4. Single-Tap Microphone Toggle (Speak Freely!)
+  function duckMediaAudio(shouldDuck) {
+    if (shouldDuck) {
+      if (isMediaDucked) return;
+      isMediaDucked = true;
+
+      // 1. HTML5 Video (HLS Movies, Direct MP4, Local Files)
+      if (mainVideo) {
+        if (mainVideo.volume > 0.25) savedMainVideoVolume = mainVideo.volume;
+        mainVideo.volume = 0.15; // Smooth ducking to 15%
+      }
+
+      // 2. YouTube Player
+      if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
+        try {
+          const curYt = (typeof ytPlayer.getVolume === 'function') ? ytPlayer.getVolume() : 100;
+          if (curYt > 25) savedYtVolume = curYt;
+          ytPlayer.setVolume(15); // Smooth ducking to 15%
+        } catch (e) {}
+      }
+
+      updateMicUI(isMicLive, true);
+
+    } else {
+      // Don't unduck if local user is still speaking or partner is speaking
+      if (isMicLive || partnerSpeakingViaSocket) return;
+      if (!isMediaDucked) return;
+      isMediaDucked = false;
+
+      // Restore HTML5 Video
+      if (mainVideo) {
+        mainVideo.volume = savedMainVideoVolume || 1.0;
+      }
+
+      // Restore YouTube
+      if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
+        try {
+          ytPlayer.setVolume(savedYtVolume || 100);
+        } catch (e) {}
+      }
+
+      updateMicUI(isMicLive, false);
+    }
+  }
+
+  // 3. Single-Tap Microphone Toggle (Speak Freely!)
   async function toggleMicrophone() {
+    ensureAudioUnlocked();
     if (!isMicLive) {
       // TURN MIC ON
       try {
         showToast('🎙️ Starting mic...');
         if (!localAudioStream) {
           localAudioStream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            },
             video: false
           });
         }
 
-        const audioTrack = localAudioStream.getAudioTracks()[0];
-        if (audioTrack) audioTrack.enabled = true;
+        const realMicTrack = localAudioStream.getAudioTracks()[0];
+        if (realMicTrack) realMicTrack.enabled = true;
 
         if (!peerConnection) initAutoVoice();
 
-        // Attach audio track to peer connection
-        const senders = peerConnection.getSenders();
-        audioSender = senders.find(s => s.track && s.track.kind === 'audio');
-        if (audioSender) {
-          await audioSender.replaceTrack(audioTrack);
-        } else {
-          const transceivers = peerConnection.getTransceivers();
-          const audioTrans = transceivers.find(t => t.receiver.track && t.receiver.track.kind === 'audio');
-          if (audioTrans) {
-            audioTrans.direction = 'sendrecv';
-            await audioTrans.sender.replaceTrack(audioTrack);
-          } else {
-            peerConnection.addTrack(audioTrack, localAudioStream);
-          }
+        // Find active audio sender
+        if (!audioSender) {
+          const senders = peerConnection.getSenders();
+          audioSender = senders.find(s => (s.track && s.track.kind === 'audio') || s.dtmf !== undefined) || senders[0];
         }
 
-        // Send offer to partner
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('voice-signal', { signal: { type: 'offer', sdp: offer } });
+        if (audioSender) {
+          console.log('[VoiceChat] Swapping silent track with live microphone track!');
+          await audioSender.replaceTrack(realMicTrack);
+        } else {
+          audioSender = peerConnection.addTrack(realMicTrack, localAudioStream);
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          socket.emit('voice-signal', { signal: { type: 'offer', sdp: offer } });
+        }
 
         isMicLive = true;
-        btnVoiceCall.classList.add('in-call', 'speaking-glow');
-        voiceCallIcon.textContent = '🟢';
-        voiceCallText.textContent = 'Mic Live';
+        updateMicUI(true, true);
         showToast('🎙️ Mic is ON! Your partner hears you now ❤️');
+
+        duckMediaAudio(true); // Duck movie/YouTube volume on speaker's own device
+        socket.emit('voice-speaking', { roomId, isSpeaking: true });
 
       } catch (err) {
         console.error('[Mic Access Error]', err);
-        showToast('⚠️ Please allow microphone permission to speak.');
+        showToast('⚠️ Please allow microphone permission in your browser.');
       }
     } else {
-      // TURN MIC OFF (MUTE)
+      // TURN MIC OFF (MUTE & RELEASE HARDWARE COMPLETELY)
       if (localAudioStream) {
-        localAudioStream.getAudioTracks().forEach(t => t.enabled = false);
+        localAudioStream.getAudioTracks().forEach(t => {
+          t.enabled = false;
+          t.stop(); // 🔒 Releases microphone hardware completely! Removes red dot from browser tab.
+        });
+        localAudioStream = null;
       }
-      if (audioSender) {
-        audioSender.replaceTrack(null).catch(() => {});
+      
+      const silentTrack = getOrCreateSilentTrack();
+      if (audioSender && silentTrack) {
+        audioSender.replaceTrack(silentTrack).catch(() => {});
       }
 
       isMicLive = false;
-      btnVoiceCall.classList.remove('in-call', 'speaking-glow');
-      voiceCallIcon.textContent = '🎙️';
-      voiceCallText.textContent = 'Mic Off';
-      showToast('🔇 Mic Muted. You can still hear your partner!');
+      updateMicUI(false, false);
+      showToast('🔇 Mic Muted. Hardware released.');
+
+      duckMediaAudio(false); // Restore movie/YouTube volume on speaker's device
+      socket.emit('voice-speaking', { roomId, isSpeaking: false });
     }
   }
 
@@ -2066,7 +2199,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnVoiceCall.addEventListener('click', toggleMicrophone);
   }
 
-  // Socket WebRTC Voice Signaling Listeners (Always Active!)
+  if (btnPlayerMic) {
+    if (playerMicText) playerMicText.textContent = 'Mic Off';
+    btnPlayerMic.addEventListener('click', toggleMicrophone);
+  }
+
+  // Keyboard shortcut: Press 'V' to toggle microphone anytime (super convenient in fullscreen!)
+  document.addEventListener('keydown', (e) => {
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (e.key === 'v' || e.key === 'V') {
+      e.preventDefault();
+      toggleMicrophone();
+    }
+  });
+
+  // Visual speaking indicator & real-time audio ducking from partner
+  socket.on('voice-peer-speaking', ({ isSpeaking }) => {
+    partnerSpeakingViaSocket = isSpeaking;
+    if (isSpeaking) {
+      duckMediaAudio(true);
+    } else {
+      duckMediaAudio(false);
+    }
+  });
+
+  // Partner Joined -> Initiate Offer
   socket.on('voice-peer-joined', async (data) => {
     console.log(`[VoiceChat] Partner ${data.name} is ready in room`);
     if (!peerConnection) initAutoVoice();
@@ -2083,6 +2240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // WebRTC Signal Exchange (Offers, Answers, ICE Candidates with Queuing)
   socket.on('voice-signal', async (data) => {
     try {
       if (!peerConnection) initAutoVoice();
@@ -2090,6 +2248,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (data.signal.type === 'offer') {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+        while (iceCandidateQueue.length > 0) {
+          const cand = iceCandidateQueue.shift();
+          await peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+        }
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
         socket.emit('voice-signal', {
@@ -2099,24 +2261,32 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (data.signal.type === 'answer') {
         if (peerConnection.signalingState !== 'stable') {
           await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+          while (iceCandidateQueue.length > 0) {
+            const cand = iceCandidateQueue.shift();
+            await peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+          }
         }
       } else if (data.signal.type === 'candidate' && data.signal.candidate) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate)).catch(() => {});
+        if (!peerConnection.remoteDescription || !peerConnection.remoteDescription.type) {
+          iceCandidateQueue.push(data.signal.candidate);
+        } else {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate)).catch(() => {});
+        }
       }
     } catch (e) {
       console.warn('[WebRTC Signal Error]', e);
     }
   });
 
-  socket.on('voice-peer-left', (data) => {
+  socket.on('voice-peer-left', () => {
+    partnerSpeakingViaSocket = false;
+    duckMediaAudio(false);
     if (remoteAudioElement) remoteAudioElement.srcObject = null;
-    if (isDucking && mainVideo) mainVideo.volume = originalMovieVolume;
-    isDucking = false;
   });
 
   // Automatically start voice listener upon room connection!
   socket.on('connect', () => {
-    setTimeout(initAutoVoice, 800);
+    setTimeout(initAutoVoice, 600);
   });
 
 

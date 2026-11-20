@@ -9,12 +9,18 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@600;800;900&display=swap" rel="stylesheet">
   <!-- HLS.js for raw master m3u8 playback on Android & Desktop browsers -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-  <!-- Socket.io -->
+  <!-- Google Firebase Realtime Cloud SDKs (24/7 Zero-Server Sync) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script src="/firebase-adapter.js"></script>
+  <!-- Socket.io & YouTube -->
   <script src="https://www.youtube.com/iframe_api"></script>
-  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="room-body">
+  <!-- Dedicated Persistent Remote Voice Audio Element (Never use display:none or mobile browser mutes it) -->
+  <audio id="remoteVoiceAudio" autoplay playsinline style="position: fixed; width: 1px; height: 1px; opacity: 0.001; pointer-events: none; bottom: 0; right: 0;"></audio>
 
   <!-- Floating reactions overlay -->
   <div id="reactionOverlay" class="reaction-overlay"></div>
@@ -41,7 +47,7 @@
         <h4>Tap to Enable Sync & Audio</h4>
         <p>Tap below to unlock real-time synchronized playback and audio with your partner.</p>
       </div>
-      <button id="btnUnlockMobile" class="btn-primary">Connect & Sync Now 🎬</button>
+      <button id="btnUnlockMobile" class="btn-primary" onclick="document.getElementById('mobileUnlockBanner').style.display='none';">Connect & Sync Now 🎬</button>
     </div>
   </div>
 
@@ -184,11 +190,10 @@
 
         <!-- Custom Subtitle Overlay -->
         <div id="customSubtitlesOverlay" class="custom-subtitles-overlay"></div>
-        <!-- Big Center Play Button Overlay (For iOS Autoplay unlock & easy play) -->
-        <div id="bigPlayOverlay" class="big-play-overlay hidden">
-          <button id="btnBigPlay" class="btn-big-play" type="button">
-            <span class="big-play-icon">▶</span>
-            <span class="big-play-text">Tap to Play Together 🎬</span>
+        <!-- Center Play/Pause Button Overlay (YouTube / Netflix Style) -->
+        <div id="centerPlayOverlay" class="center-play-overlay">
+          <button id="btnCenterPlay" class="btn-center-play" type="button" aria-label="Play or Pause">
+            <span id="centerPlayIcon" class="center-play-icon">▶</span>
           </button>
         </div>
 
@@ -288,6 +293,10 @@
             </div>
 
             <div class="controls-right">
+              <button id="btnPlayerMic" class="ctrl-btn btn-player-mic" title="Toggle Mic (Voice Chat) - Shortcut: V">
+                <span id="playerMicIcon">🎙️</span>
+                <span id="playerMicText">Mic Off</span>
+              </button>
               <button id="btnFullscreenChat" class="ctrl-btn btn-fs-chat" title="Quick Message in Fullscreen">💬</button>
               <button id="btnSubtitleToggle" class="ctrl-btn btn-sub" title="Toggle Subtitles">💬 Subs: Ar</button>
               <button id="btnSubtitleSettings" class="ctrl-btn btn-sub-settings" title="Subtitle Settings">⚙️</button>
