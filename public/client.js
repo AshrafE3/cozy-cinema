@@ -2153,8 +2153,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (!peerConnection) initAutoVoice();
 
-        // Find active audio sender
-        if (!audioSender) {
+        // Find active audio sender & guarantee transceiver direction is sendrecv
+        const transceivers = peerConnection.getTransceivers ? peerConnection.getTransceivers() : [];
+        let audioTransceiver = transceivers.find(t => 
+          (t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') ||
+          (t.sender && t.sender.track && t.sender.track.kind === 'audio') ||
+          t.mid !== null
+        );
+        if (audioTransceiver) {
+          audioTransceiver.direction = 'sendrecv';
+          audioSender = audioTransceiver.sender;
+        } else if (!audioSender) {
           const senders = peerConnection.getSenders();
           audioSender = senders.find(s => (s.track && s.track.kind === 'audio') || s.dtmf !== undefined) || senders[0];
         }
@@ -2227,6 +2236,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     partnerSpeakingViaSocket = isSpeaking;
     if (isSpeaking) {
       duckMediaAudio(true);
+      // Guarantee remote speaker audio element is unmuted, at full volume, and actively playing!
+      const remoteEl = document.getElementById('remoteVoiceAudio') || remoteAudioElement;
+      if (remoteEl) {
+        remoteEl.volume = 1.0;
+        remoteEl.muted = false;
+        if (remoteEl.paused) {
+          remoteEl.play().catch(e => console.log('[VoiceChat] Remote play wake:', e));
+        }
+      }
     } else {
       duckMediaAudio(false);
     }
@@ -2238,6 +2256,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!peerConnection) initAutoVoice();
 
     try {
+      // Ensure local audio transceiver is bidirectional ('sendrecv') before offering
+      const transceivers = peerConnection.getTransceivers ? peerConnection.getTransceivers() : [];
+      for (const t of transceivers) {
+        if ((t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') || t.mid !== null) {
+          t.direction = 'sendrecv';
+          audioSender = t.sender;
+        }
+      }
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
       socket.emit('voice-signal', {
@@ -2265,6 +2291,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           const cand = iceCandidateQueue.shift();
           await peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
         }
+
+        // CRITICAL FOR MOBILE & BIDIRECTIONAL AUDIO:
+        // Set direction to 'sendrecv' on the transceiver matching the offer so createAnswer()
+        // generates an answer SDP with 'a=sendrecv'. This allows sending mic audio from phone to laptop!
+        const transceivers = peerConnection.getTransceivers ? peerConnection.getTransceivers() : [];
+        for (const t of transceivers) {
+          if ((t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') || t.mid !== null) {
+            t.direction = 'sendrecv';
+            audioSender = t.sender;
+          }
+        }
+
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
         socket.emit('voice-signal', {
@@ -2277,6 +2315,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           while (iceCandidateQueue.length > 0) {
             const cand = iceCandidateQueue.shift();
             await peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+          }
+          const transceivers = peerConnection.getTransceivers ? peerConnection.getTransceivers() : [];
+          for (const t of transceivers) {
+            if ((t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') || t.mid !== null) {
+              if (!audioSender) audioSender = t.sender;
+            }
           }
         }
       } else if (data.signal.type === 'candidate' && data.signal.candidate) {
