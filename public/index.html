@@ -67,15 +67,6 @@
       <p class="tagline">Watch any movie, stream, or video together in real-time sync with top 1080p quality and zero lag ❤️</p>
     </div>
 
-    <!-- Active Rooms Alert -->
-    <div id="activeRoomsSection" class="active-rooms-card hidden">
-      <div class="pulse-header">
-        <span class="live-dot"></span>
-        <span>A room is open and waiting for you right now! 🎉</span>
-      </div>
-      <div id="activeRoomsList" class="active-rooms-list"></div>
-    </div>
-
     <div class="glass-card">
       <!-- High-End Segmented Tab Switcher -->
       <div class="home-tabs">
@@ -149,9 +140,6 @@
     const paneCreate = document.getElementById('paneCreate');
     const paneJoin = document.getElementById('paneJoin');
 
-    const activeRoomsSection = document.getElementById('activeRoomsSection');
-    const activeRoomsList = document.getElementById('activeRoomsList');
-
     const savedName = localStorage.getItem('cozy_username');
     if (savedName) nameInput.value = savedName;
 
@@ -182,41 +170,6 @@
       joinRoomInput.value = queryRoom;
       tabJoinBtn.click();
     }
-
-    async function checkActiveRooms() {
-      try {
-        const res = await fetch('/api/rooms');
-        const data = await res.json();
-        if (data.activeRooms && data.activeRooms.length > 0) {
-          activeRoomsList.innerHTML = '';
-          data.activeRooms.forEach(room => {
-            const item = document.createElement('div');
-            item.className = 'active-room-item';
-            item.innerHTML = `
-              <div class="room-info-meta">
-                <b>🎬 Room: ${room.id}</b>
-                <small>Watching: ${room.users.join(', ')}</small>
-              </div>
-              <button class="btn-enter-room" data-room="${room.id}">Join Now 👉</button>
-            `;
-            activeRoomsList.appendChild(item);
-          });
-          activeRoomsSection.classList.remove('hidden');
-
-          if (!queryRoom && !joinRoomInput.value) {
-            joinRoomInput.value = data.activeRooms[0].id;
-          }
-
-          document.querySelectorAll('.btn-enter-room').forEach(btn => {
-            btn.addEventListener('click', () => {
-              const r = btn.getAttribute('data-room');
-              enterRoom(r);
-            });
-          });
-        }
-      } catch (err) {}
-    }
-    checkActiveRooms();
 
     function enterRoom(roomName) {
       const name = nameInput.value.trim() || 'Viewer';
