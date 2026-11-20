@@ -1,4 +1,17 @@
 // Cozy Cinema - 100% Synchronized Playback & Live Chat Engine
+// Automatically bypass ngrok interstitial warning on all internal API calls
+const _nativeFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+  options = options || {};
+  options.headers = options.headers || {};
+  if (options.headers instanceof Headers) {
+    options.headers.set('ngrok-skip-browser-warning', 'true');
+  } else {
+    options.headers['ngrok-skip-browser-warning'] = 'true';
+  }
+  return _nativeFetch(url, options);
+};
+
 document.addEventListener('DOMContentLoaded', async () => {
   const socket = io({
     reconnection: true,
@@ -1838,7 +1851,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ================= 🎙️ WEBRTC VOICE CHAT ENGINE (WITH AUDIO DUCKING) =================
+  // ================= 🎙️ WEBRTC AUTO-VOICE & LIVE WALKIE-TALKIE ENGINE =================
   const btnVoiceCall = document.getElementById('btnVoiceCall');
   const btnVoiceMute = document.getElementById('btnVoiceMute');
   const voiceCallIcon = document.getElementById('voiceCallIcon');
@@ -1847,8 +1860,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let localAudioStream = null;
   let peerConnection = null;
-  let isVoiceCallActive = false;
-  let isMicMuted = false;
+  let audioSender = null;
+  let isMicLive = false;
   let remoteAudioElement = null;
   let audioContext = null;
   let duckingAnalyser = null;
@@ -1860,86 +1873,83 @@ document.addEventListener('DOMContentLoaded', async () => {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' }
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' }
     ]
   };
 
-  async function startVoiceCall() {
+  // 1. Mobile Audio Autoplay Unlocker
+  function ensureAudioUnlocked() {
     try {
-      showToast('🎙️ Requesting microphone access...');
-      localAudioStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: false
-      });
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => {});
+      }
+      if (remoteAudioElement && remoteAudioElement.paused && remoteAudioElement.srcObject) {
+        remoteAudioElement.play().catch(() => {});
+      }
+    } catch (e) {}
+  }
+  document.addEventListener('pointerdown', ensureAudioUnlocked, { passive: true });
+  document.addEventListener('click', ensureAudioUnlocked, { passive: true });
 
-      isVoiceCallActive = true;
-      btnVoiceCall.classList.add('in-call');
-      voiceCallIcon.textContent = '🟢';
-      voiceCallText.textContent = 'End Call';
-      if (btnVoiceMute) btnVoiceMute.classList.remove('hidden');
+  // 2. Auto-initialize Voice Engine (Always-Listening Mode)
+  function initAutoVoice() {
+    if (peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
+      return;
+    }
 
-      showToast('🎙️ Voice call connected! Speak freely with your partner ❤️');
-      appendChatMessage('System', '🎙️ You joined the voice call', 'system');
+    try {
+      if (peerConnection) {
+        try { peerConnection.close(); } catch (e) {}
+      }
 
-      // Create PeerConnection
-      setupPeerConnection();
+      peerConnection = new RTCPeerConnection(rtcConfig);
 
-      // Broadcast to room that we started voice call
+      // Always ready to receive partner's audio through phone/PC speakers
+      peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+
+      // Handle ICE Candidates
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('voice-signal', {
+            signal: { type: 'candidate', candidate: event.candidate }
+          });
+        }
+      };
+
+      // Handle incoming partner audio track -> Play immediately!
+      peerConnection.ontrack = (event) => {
+        console.log('[VoiceChat] Remote audio track received from partner!');
+        if (!remoteAudioElement) {
+          remoteAudioElement = new Audio();
+          remoteAudioElement.autoplay = true;
+          remoteAudioElement.playsInline = true;
+        }
+        remoteAudioElement.srcObject = event.streams[0];
+        remoteAudioElement.play().catch(e => console.log('Audio autoplay waiting for user tap:', e));
+        setupAudioDucking(event.streams[0]);
+        showToast('🔊 Partner voice connected! Speakers ready.');
+      };
+
+      peerConnection.onconnectionstatechange = () => {
+        console.log('[VoiceChat] Connection state:', peerConnection.connectionState);
+        if (peerConnection.connectionState === 'connected') {
+          console.log('[VoiceChat] WebRTC audio connected successfully!');
+        } else if (peerConnection.connectionState === 'failed') {
+          console.warn('[VoiceChat] Connection failed, attempting reset...');
+          setTimeout(initAutoVoice, 2000);
+        }
+      };
+
+      // Notify room that we are ready to listen/talk
       socket.emit('voice-join', { roomId, name: myName });
 
     } catch (err) {
-      console.error('[VoiceChat Error]', err);
-      showToast('⚠️ Microphone access was denied or unavailable.');
+      console.warn('[VoiceChat Init Error]', err);
     }
   }
 
-  function setupPeerConnection() {
-    if (peerConnection) {
-      try { peerConnection.close(); } catch (e) {}
-    }
-
-    peerConnection = new RTCPeerConnection(rtcConfig);
-
-    // Add local tracks
-    if (localAudioStream) {
-      localAudioStream.getAudioTracks().forEach(track => {
-        peerConnection.addTrack(track, localAudioStream);
-      });
-    }
-
-    // Handle ICE Candidates
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit('voice-signal', {
-          to: null,
-          signal: { type: 'candidate', candidate: event.candidate }
-        });
-      }
-    };
-
-    // Handle remote track
-    peerConnection.ontrack = (event) => {
-      console.log('[VoiceChat] Remote audio track received!');
-      if (!remoteAudioElement) {
-        remoteAudioElement = new Audio();
-        remoteAudioElement.autoplay = true;
-      }
-      remoteAudioElement.srcObject = event.streams[0];
-      setupAudioDucking(event.streams[0]);
-      showToast('🎧 Partner voice connected!');
-    };
-
-    peerConnection.onconnectionstatechange = () => {
-      console.log('[VoiceChat] Connection state:', peerConnection.connectionState);
-      if (peerConnection.connectionState === 'connected') {
-        showToast('🟢 Partner voice connected clearly!');
-      } else if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
-        console.warn('[VoiceChat] Connection dropped, reconnecting...');
-      }
-    };
-  }
-
-  // Setup Audio Ducking: automatically lower movie volume when speaking!
+  // 3. Audio Ducking: automatically lowers movie volume when partner speaks!
   function setupAudioDucking(stream) {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -1963,20 +1973,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
         const average = sum / bufferLength;
 
-        if (average > 18) {
-          // Speech detected! Smoothly duck movie volume
+        if (average > 15) {
+          // Partner is speaking! Smoothly duck movie volume
           if (!isDucking && mainVideo) {
             isDucking = true;
             mainVideo.volume = 0.25;
-            btnVoiceCall.classList.add('speaking-glow');
+            if (btnVoiceCall) btnVoiceCall.classList.add('speaking-glow');
           }
           silenceTimer = Date.now();
         } else {
-          // Silence: restore volume after 1.2 seconds of silence
-          if (isDucking && Date.now() - silenceTimer > 1200) {
+          // Silence: restore movie volume after 1 second
+          if (isDucking && Date.now() - silenceTimer > 1000) {
             isDucking = false;
             if (mainVideo) mainVideo.volume = originalMovieVolume;
-            btnVoiceCall.classList.remove('speaking-glow');
+            if (btnVoiceCall && !isMicLive) btnVoiceCall.classList.remove('speaking-glow');
           }
         }
       }, 100);
@@ -1985,98 +1995,98 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  function leaveVoiceCall(notify = true) {
-    if (!isVoiceCallActive) return;
-    isVoiceCallActive = false;
+  // 4. Single-Tap Microphone Toggle (Speak Freely!)
+  async function toggleMicrophone() {
+    if (!isMicLive) {
+      // TURN MIC ON
+      try {
+        showToast('🎙️ Starting mic...');
+        if (!localAudioStream) {
+          localAudioStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: false
+          });
+        }
 
-    if (localAudioStream) {
-      localAudioStream.getTracks().forEach(t => t.stop());
-      localAudioStream = null;
-    }
+        const audioTrack = localAudioStream.getAudioTracks()[0];
+        if (audioTrack) audioTrack.enabled = true;
 
-    if (peerConnection) {
-      try { peerConnection.close(); } catch (e) {}
-      peerConnection = null;
-    }
+        if (!peerConnection) initAutoVoice();
 
-    if (remoteAudioElement) {
-      remoteAudioElement.srcObject = null;
-    }
+        // Attach audio track to peer connection
+        const senders = peerConnection.getSenders();
+        audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+        if (audioSender) {
+          await audioSender.replaceTrack(audioTrack);
+        } else {
+          const transceivers = peerConnection.getTransceivers();
+          const audioTrans = transceivers.find(t => t.receiver.track && t.receiver.track.kind === 'audio');
+          if (audioTrans) {
+            audioTrans.direction = 'sendrecv';
+            await audioTrans.sender.replaceTrack(audioTrack);
+          } else {
+            peerConnection.addTrack(audioTrack, localAudioStream);
+          }
+        }
 
-    if (duckingInterval) clearInterval(duckingInterval);
-    if (isDucking && mainVideo) mainVideo.volume = originalMovieVolume;
-    isDucking = false;
+        // Send offer to partner
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('voice-signal', { signal: { type: 'offer', sdp: offer } });
 
-    btnVoiceCall.classList.remove('in-call', 'speaking-glow');
-    voiceCallIcon.textContent = '🎙️';
-    voiceCallText.textContent = 'Voice Call';
-    if (btnVoiceMute) {
-      btnVoiceMute.classList.add('hidden');
-      btnVoiceMute.classList.remove('muted');
-    }
-    isMicMuted = false;
+        isMicLive = true;
+        btnVoiceCall.classList.add('in-call', 'speaking-glow');
+        voiceCallIcon.textContent = '🟢';
+        voiceCallText.textContent = 'Mic Live';
+        showToast('🎙️ Mic is ON! Your partner hears you now ❤️');
 
-    if (notify) {
-      socket.emit('voice-leave', { roomId });
-      showToast('📞 Voice call ended.');
-      appendChatMessage('System', '📞 You left the voice call', 'system');
-    }
-  }
-
-  function toggleVoiceMute() {
-    if (!localAudioStream) return;
-    isMicMuted = !isMicMuted;
-    localAudioStream.getAudioTracks().forEach(track => {
-      track.enabled = !isMicMuted;
-    });
-
-    if (isMicMuted) {
-      btnVoiceMute.classList.add('muted');
-      voiceMuteIcon.textContent = '🔇';
-      showToast('🔇 Microphone muted');
+      } catch (err) {
+        console.error('[Mic Access Error]', err);
+        showToast('⚠️ Please allow microphone permission to speak.');
+      }
     } else {
-      btnVoiceMute.classList.remove('muted');
-      voiceMuteIcon.textContent = '🎤';
-      showToast('🎤 Microphone unmuted');
+      // TURN MIC OFF (MUTE)
+      if (localAudioStream) {
+        localAudioStream.getAudioTracks().forEach(t => t.enabled = false);
+      }
+      if (audioSender) {
+        audioSender.replaceTrack(null).catch(() => {});
+      }
+
+      isMicLive = false;
+      btnVoiceCall.classList.remove('in-call', 'speaking-glow');
+      voiceCallIcon.textContent = '🎙️';
+      voiceCallText.textContent = 'Mic Off';
+      showToast('🔇 Mic Muted. You can still hear your partner!');
     }
   }
 
   if (btnVoiceCall) {
-    btnVoiceCall.addEventListener('click', () => {
-      if (isVoiceCallActive) {
-        leaveVoiceCall(true);
-      } else {
-        startVoiceCall();
-      }
-    });
+    voiceCallText.textContent = 'Mic Off';
+    btnVoiceCall.addEventListener('click', toggleMicrophone);
   }
 
-  if (btnVoiceMute) {
-    btnVoiceMute.addEventListener('click', toggleVoiceMute);
-  }
-
-  // Socket WebRTC Voice Signaling Listeners
+  // Socket WebRTC Voice Signaling Listeners (Always Active!)
   socket.on('voice-peer-joined', async (data) => {
-    showToast(`🎙️ ${data.name} is in voice call`);
-    appendChatMessage('System', `🎙️ ${data.name} is in voice call. Tap "Voice Call" to speak!`, 'system');
-    if (isVoiceCallActive && peerConnection) {
-      try {
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('voice-signal', {
-          to: data.peerId,
-          signal: { type: 'offer', sdp: offer }
-        });
-      } catch (err) {
-        console.error('[WebRTC Offer Error]', err);
-      }
+    console.log(`[VoiceChat] Partner ${data.name} is ready in room`);
+    if (!peerConnection) initAutoVoice();
+
+    try {
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('voice-signal', {
+        to: data.peerId,
+        signal: { type: 'offer', sdp: offer }
+      });
+    } catch (err) {
+      console.warn('[Voice Offer Error]', err);
     }
   });
 
   socket.on('voice-signal', async (data) => {
-    if (!isVoiceCallActive) return;
     try {
-      if (!peerConnection) setupPeerConnection();
+      if (!peerConnection) initAutoVoice();
+      if (!data.signal) return;
 
       if (data.signal.type === 'offer') {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
@@ -2087,21 +2097,26 @@ document.addEventListener('DOMContentLoaded', async () => {
           signal: { type: 'answer', sdp: answer }
         });
       } else if (data.signal.type === 'answer') {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+        if (peerConnection.signalingState !== 'stable') {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+        }
       } else if (data.signal.type === 'candidate' && data.signal.candidate) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate)).catch(() => {});
       }
     } catch (e) {
-      console.warn('[WebRTC Signal Handling Error]', e);
+      console.warn('[WebRTC Signal Error]', e);
     }
   });
 
   socket.on('voice-peer-left', (data) => {
-    showToast(`📞 ${data.name} left voice call`);
     if (remoteAudioElement) remoteAudioElement.srcObject = null;
-    btnVoiceCall.classList.remove('speaking-glow');
     if (isDucking && mainVideo) mainVideo.volume = originalMovieVolume;
     isDucking = false;
+  });
+
+  // Automatically start voice listener upon room connection!
+  socket.on('connect', () => {
+    setTimeout(initAutoVoice, 800);
   });
 
 
