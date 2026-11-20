@@ -182,12 +182,24 @@ class FirebaseSocketAdapter {
       this.trigger('sync-embed-reload');
     });
 
-    // 9. WebRTC Voice Peers
+    // 9. WebRTC Voice Peers (Deterministic Offerer Election to prevent glare)
     this.roomRef.child('voice_peers').on('child_added', (snap) => {
       const peerId = snap.key;
       const val = snap.val();
-      if (peerId !== this.clientId && val) {
-        this.trigger('voice-peer-joined', { peerId, name: val.name || 'Partner' });
+      if (!val || peerId === this.clientId) return;
+
+      this.activeVoicePeerId = peerId;
+
+      // Exactly ONE peer creates the offer (the one with the smaller ID)
+      // The other peer waits to receive the offer and will answer it.
+      // This eliminates WebRTC offer collision (glare) with 100% mathematical certainty!
+      if (this.clientId < peerId) {
+        console.log(`[FirebaseSocket] Offerer elected (${this.clientId} < ${peerId}). Sending offer in 300ms...`);
+        setTimeout(() => {
+          this.trigger('voice-peer-joined', { peerId, name: val.name || 'Partner' });
+        }, 300);
+      } else {
+        console.log(`[FirebaseSocket] Answerer elected (${this.clientId} > ${peerId}). Awaiting partner's offer...`);
       }
     });
 
@@ -195,6 +207,7 @@ class FirebaseSocketAdapter {
       const peerId = snap.key;
       const val = snap.val();
       if (peerId !== this.clientId) {
+        if (this.activeVoicePeerId === peerId) this.activeVoicePeerId = null;
         this.trigger('voice-peer-left', { peerId, name: (val && val.name) ? val.name : 'Partner' });
       }
     });
@@ -204,6 +217,7 @@ class FirebaseSocketAdapter {
       const sigData = snap.val();
       snap.ref.remove().catch(() => {});
       if (sigData && sigData.from && sigData.signal) {
+        this.activeVoicePeerId = sigData.from;
         this.trigger('voice-signal', sigData);
       }
     });
@@ -390,8 +404,9 @@ class FirebaseSocketAdapter {
       vpRef.onDisconnect().remove();
 
     } else if (event === 'voice-signal') {
-      if (data.to) {
-        this.roomRef.child('voice_signals/' + data.to).push({
+      const targetPeer = data.to || this.activeVoicePeerId;
+      if (targetPeer) {
+        this.roomRef.child('voice_signals/' + targetPeer).push({
           from: this.clientId,
           signal: data.signal,
           name: this.userName,

@@ -1917,8 +1917,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:global.stun.twilio.com:3478' }
-    ]
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp'
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ],
+    iceCandidatePoolSize: 4
   };
 
   // Helper: Generates a lightweight silent track so WebRTC connection is 100% established
@@ -2247,6 +2257,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!data.signal) return;
 
       if (data.signal.type === 'offer') {
+        if (peerConnection.signalingState !== 'stable') {
+          console.warn('[WebRTC] Signaling state collision, rolling back local description');
+          await peerConnection.setLocalDescription({ type: 'rollback' }).catch(() => {});
+        }
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
         while (iceCandidateQueue.length > 0) {
           const cand = iceCandidateQueue.shift();
