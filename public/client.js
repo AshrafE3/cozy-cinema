@@ -1983,13 +1983,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       peerConnection = new RTCPeerConnection(rtcConfig);
 
-      // Attach silent track so connection negotiates a live audio channel immediately
-      const silentTrack = getOrCreateSilentTrack();
-      if (silentTrack && dummyAudioStream) {
-        audioSender = peerConnection.addTrack(silentTrack, dummyAudioStream);
-      } else {
-        peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+      // Standard W3C Audio Transceiver: establishes two-way voice channel without requiring mic upfront
+      // or suspended Web Audio contexts on iOS Safari and Android Chrome
+      let transceiver = peerConnection.getTransceivers().find(t => t.receiver.track && t.receiver.track.kind === 'audio');
+      if (!transceiver) {
+        transceiver = peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
       }
+      audioSender = transceiver.sender;
 
       // Handle ICE Candidates
       peerConnection.onicecandidate = (event) => {
@@ -2190,9 +2190,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         localAudioStream = null;
       }
       
-      const silentTrack = getOrCreateSilentTrack();
-      if (audioSender && silentTrack) {
-        audioSender.replaceTrack(silentTrack).catch(() => {});
+      if (audioSender) {
+        audioSender.replaceTrack(null).catch(() => {});
       }
 
       isMicLive = false;
